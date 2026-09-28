@@ -35,7 +35,8 @@ whole document into a script: cleanup and recovery are separate choices.
 
 Budget an uninterrupted session. Policy-state polls allow 20 minutes, each
 remediation poll allows 30 minutes, and Automation propagation can add another
-15 minutes per gate. A timeout is an incomplete result. See
+15 minutes per gate. On a brand-new subscription, provider registration in
+section 2 can add 10–15 minutes. A timeout is an incomplete result. See
 [interruption recovery](#if-the-session-stops) before retrying a write. For a
 Policy-only exercise, stop after section 5 and use section 11 for cleanup.
 
@@ -78,13 +79,27 @@ does not change the qualified Policy JSON or deployment scripts. If either
 repository has advanced, review its diff, record the full commit SHA, and run
 all offline checks before Azure writes.
 
+A fresh-tenant replication on 2026-09-27 passed sections 1–8 with these same
+pins in a brand-new tenant and Free Trial subscription. Sections 1–8 needed
+one environment-driven change, an allow-listed `AUTOMATION_LOCATION`. An
+optional VM extension also needed an available VM size. Some sections
+overlapped in that run; see the
+[sanitized new-tenant record](LIVE-TEST-2026-09-27-new-tenant.md).
+
 This workflow reproduces Policy evaluation, Modify remediation, Key Vault
 `DeployIfNotExists`, audit signals, Automation audit/apply/idempotence, and
 least-privilege cleanup. Empty canary policies prove the policy-control path;
-they do **not** prove archive movement or restores of real backup data. The
-unprotected share proves existence detection only, not backup health. Deny
-outcomes come from the historical sanitized live-test matrix; this safer
-replication path does not ship or execute the negative probe templates.
+they do **not** prove archive movement or restores of real backup data. An
+optional 2026-09-27 extension also made one bounded runbook write, in an
+exclusive test window, to a policy protecting a single real VM; it did not
+exercise archive movement or restore either. The unprotected share proves
+existence detection only, not backup health. Deny outcomes come from the
+sanitized
+[2026-08-31 matrix](LIVE-TEST-2026-08-31-policy-automation.md#policy-live-results)
+and the
+[2026-09-27 validation-only probes](LIVE-TEST-2026-09-27-new-tenant.md#validation-only-deny-probes);
+this safer replication path does not ship or execute the negative probe
+templates.
 
 ## Privacy rules
 
@@ -134,6 +149,22 @@ RBAC elevation through the section 7 writer revoke and section 8 verification,
 then remove it. Reacquire it for cleanup. Removing access immediately after
 the first role grant prevents later grants or their revocation. Microsoft lists
 the available actions in its [privileged role definitions](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles/privileged).
+
+Choose the terminal before the first block. Where Microsoft Entra security
+defaults are enabled, device-code sign-in is blocked; Microsoft documents that
+all tenants created from 2026-07-01 block it as part of security defaults.
+Azure CLI falls back to device code when it cannot open a browser, for example
+over SSH, so run the whole guide in a session where Azure CLI can open a
+browser. [Security defaults](https://learn.microsoft.com/en-us/entra/fundamentals/security-defaults),
+[`az login`](https://learn.microsoft.com/en-us/cli/azure/reference-index#az-login)
+
+If this workstation already has an Azure CLI sign-in that must not change,
+export a dedicated configuration directory in this terminal before the first
+`az` command below, for example
+`export AZURE_CONFIG_DIR="$HOME/.azure-policy-showcase"`. Export it, not just
+assign it, so the helper scripts inherit it. Azure CLI also keeps its Bicep
+binary and extensions under that directory, so exporting it first means
+section 1's Bicep checks and the later deployments use the same installation.
 
 Run every shell block in this document in **one Bash session**. Start fail-fast
 and make every locally rendered file private, then clone both repositories into
@@ -209,6 +240,22 @@ deployed runbook still uses the pinned Azure PowerShell 7.4 runtime.
 Use interactive or federated Azure CLI authentication. No credential belongs
 in these repositories.
 
+Device-code sign-in (`az login --use-device-code`) is blocked wherever
+Microsoft Entra security defaults are enabled; see section 1. The 2026-09-27
+fresh-tenant run saw it fail with `AADSTS530035`, while browser `az login`
+worked. Run the block below in the browser-capable terminal from section 1.
+
+If section 1 exported a dedicated `AZURE_CONFIG_DIR`, sign in from that same
+terminal, and export the same value again in any recovery terminal.
+
+A Global Administrator in Microsoft Entra ID is not automatically an Azure RBAC
+Owner of the subscription. Obtain subscription Owner, or the section 1 grants
+at their stated scopes, before continuing. A Global Administrator can
+temporarily elevate access to assign that role, then remove the elevation. If
+the role was granted after you signed in, run `az login` again, or
+`az account list --refresh`, so the subscription appears in the table below.
+[Elevate access](https://learn.microsoft.com/en-us/azure/role-based-access-control/elevate-access-global-admin)
+
 ```bash
 az login
 az extension add --name automation --version 1.0.0b2 --upgrade --yes
@@ -275,8 +322,32 @@ printf 'Keep this private recovery file until teardown: %s\n' "$SESSION_FILE"
 is created. If Automation Account quota forces a different region, change the
 variable and regenerate/reapply the Policy parameters before enforcement.
 
+Free Trial, Azure for Students and Azure in Open subscriptions can create only
+one Automation account per region, only in an allow-listed set of regions, and
+not in a region where the subscription already holds an Automation account.
+The list published at the time of writing includes `eastus` and `eastus2` but
+not `centralus`; see Microsoft's
+[Automation limits](https://learn.microsoft.com/en-us/azure/automation/automation-subscription-limits-faq#service-and-subscription-limits)
+for the current list. The 2026-09-27 Free Trial run used `eastus`. Only for
+such a subscription, choose an allow-listed region before section 4 and save
+it to the recovery file:
+
+```bash
+# Only for a Free Trial, Azure for Students or Azure in Open subscription.
+AUTOMATION_LOCATION="eastus"
+save_showcase_session
+```
+
+The qualified runs used an Automation region different from
+`PRIMARY_LOCATION`, so the rendered Policy parameters allowed two locations.
+Setting it to `PRIMARY_LOCATION` would leave one allowed location, which no
+recorded run has used.
+
 Register providers. This changes subscription provider state but creates no
-workload resource:
+workload resource. On a brand-new subscription, allow 10–15 minutes: in the
+2026-09-27 run only `Microsoft.Authorization`, of the nine providers below, was
+already registered, and each other registration took roughly 75 seconds or
+more:
 
 ```bash
 for provider in \
@@ -646,7 +717,10 @@ logs and all metrics enabled, and exactly one intentional file-share finding.
 The original qualification also used validation-only negative requests for
 the Deny definitions. Those easily mis-deployed templates are intentionally
 not published here: an operator typo could create an insecure storage account,
-public IP, open management rule, SQL server, or legacy VM. The sanitized live
+public IP, open management rule, SQL server, or legacy VM. The sanitized
+[2026-08-31](LIVE-TEST-2026-08-31-policy-automation.md#policy-live-results)
+and
+[2026-09-27](LIVE-TEST-2026-09-27-new-tenant.md#validation-only-deny-probes)
 records document the Deny outcomes; use your organization's normal Policy
 test framework if you need to repeat them.
 
@@ -821,6 +895,13 @@ protected items, and construct a PUT payload without read-only response
 members. This operator seed changes only `ArchivedRP` to `DoNotTier`; it does
 not grant the Automation identity writer access and does not touch the second
 vault.
+
+The block adds `If-Match` only when the GET returns an ETag. In the 2026-09-27
+run the `backupPolicies` GET returned none, so the seed PUT was an
+unconditional full-document replace. That is acceptable here only because the
+canary policy was just created, belongs only to this exercise, and no
+Automation writer exists yet. Do not reuse this unconditional PUT pattern
+against shared or long-lived policies.
 
 ```bash
 az rest --method get --url "$POLICY_URL" >"$PRIVATE_WORK/policy-before.json"
@@ -1415,6 +1496,46 @@ evidence directory to approved private storage if this machine may reboot or
 clear temporary files; it contains tenant identifiers and must stay out of Git.
 The recovery file records names and paths, not live qualification results.
 
+`trigger-scan` does not always start a new evaluation. Microsoft documents
+that when a scope is already running an on-demand scan, a new request joins
+that scan instead of starting another. In the 2026-09-27 run, a VM created
+while an earlier scan was running still had no Policy rows about 23 minutes
+later, although Microsoft documents that a new resource's status usually
+appears around 15 minutes after creation. A fresh scan started after the
+earlier one had finished produced the rows within about two minutes. The
+likely cause, not observed directly, is that the joined scan had already
+enumerated the group.
+[Evaluation triggers](https://learn.microsoft.com/en-us/azure/governance/policy/how-to/get-compliance-data#evaluation-triggers),
+[On-demand scan](https://learn.microsoft.com/en-us/azure/governance/policy/how-to/get-compliance-data#on-demand-evaluation-scan-using-rest)
+
+This section's final wait can therefore time out while a required resource
+still has no rows. The wait then returns nonzero and `set -e` closes the
+shell. Keep every required ID; never remove IDs or relax the gate to make it
+pass. Instead:
+
+1. Open a new terminal and restore the session with
+   [interruption recovery](#if-the-session-stops).
+2. Run the two scans below. Without `--no-wait`, the first joins any scan that
+   is still running and returns when it completes; the second then starts a
+   fresh scan and waits for it.
+3. Rerun this section's whole verification block. First restore, from the
+   reviewed guide text and live readback, what it reads that the recovery
+   file does not hold: the section 5 functions `wait_for_final_policy_state`
+   and `assert_cost_center`, `EXPECTED_RUNBOOK_SHA` from section 1,
+   `WORKSPACE_ID` from section 3, and `AUTOMATION_BASE`, `POLICY_URL` and
+   `SUBSCRIPTION_POLICY_URL` from section 6. Set `WRITER_GRANTED=false` only
+   after confirming that section 7's writer revoke succeeded.
+
+```bash
+# Only after a section 8 Policy-state timeout, in the restored terminal.
+az policy state trigger-scan \
+  --subscription "$SUBSCRIPTION_ID" \
+  --resource-group "$RESOURCE_GROUP"
+az policy state trigger-scan \
+  --subscription "$SUBSCRIPTION_ID" \
+  --resource-group "$RESOURCE_GROUP"
+```
+
 ## 9. Inspect the finished product
 
 In the Azure portal, inspect these surfaces without copying tenant-specific
@@ -1454,7 +1575,9 @@ The portable inputs are:
 Start at one empty RG with `DoNotEnforce`, require nonempty Policy state, then
 promote. A successful deployment in one tenant says nothing about provider
 registration, quotas, RBAC propagation, regional availability, or existing
-Policy conflicts in another.
+Policy conflicts in another. The
+[2026-09-27 new-tenant record](LIVE-TEST-2026-09-27-new-tenant.md) shows
+several of these differences in a Free Trial subscription.
 
 ## 11. Optional cleanup
 
@@ -1466,6 +1589,25 @@ Use the existing session or first restore its private inputs with
 [interruption recovery](#if-the-session-stops). Reacquire the scoped RBAC delete
 permissions from section 1. This path also handles a Policy-only exercise or a
 partially created Automation fixture; it does not delete subscription definitions.
+
+Before deleting, check whether any real item was ever protected in this RG.
+The showcase's two canary vaults never protect an item, so by default this
+cleanup is unaffected. Newly created Recovery Services vaults have soft delete
+permanently enabled (`AlwaysOn`), as Microsoft's
+[secure-by-default article](https://learn.microsoft.com/en-us/azure/backup/secure-by-default)
+documents and the 2026-09-27 run saw for its extension vault. Stopping
+protection of a real item with delete-data leaves a soft-deleted item for the
+vault's soft-delete retention, 14 days by default. Microsoft's pages differ on
+what deleting that vault then does: the
+[vault-deletion article](https://learn.microsoft.com/en-us/azure/backup/backup-azure-delete-vault#before-you-start)
+says it can't be deleted until those items are permanently removed, while the
+secure-by-default article says the vault itself moves into a soft-deleted
+state. This repository's 2026-07-28 and 2026-08-25 Azure Files runs observed
+the second behavior; the 2026-09-27 run tested neither path for a VM item.
+Expect either a refused vault or group deletion, or a retained soft-deleted
+vault record until purge. Treat the RG as removed only when the final
+`az group exists` check below returns `false`. Put any real-protection
+experiment in its own resource group and vault, never in this showcase RG.
 
 ```bash
 # Refuse every teardown action unless the target is the exact owned scope and
@@ -1559,7 +1701,9 @@ Open a new Bash terminal and locate the private `.env` file under
 `${XDG_STATE_HOME:-$HOME/.local/state}/azure-policy-automation`. Inspect it in a
 local editor before sourcing: it must contain only the variable assignments
 written by `save_showcase_session`, with the exact owned resource names and
-trusted local repository paths. Sourcing a file executes shell code.
+trusted local repository paths. Sourcing a file executes shell code. If
+section 1 exported a dedicated `AZURE_CONFIG_DIR`, export the same value before
+this block's `az login`.
 
 ```bash
 set -euo pipefail
@@ -1581,13 +1725,14 @@ variables. The file supports inspection and section 11 cleanup only. It does
 not restore shell functions, derived values such as `WORKSPACE_ID`, or job
 state. Do not resume numbered deployment/verification blocks from this recovered
 session; that requires separately restoring their functions and derived values
-from reviewed sources and live readback.
+from reviewed sources and live readback. The section 8 Policy-state retry is
+such a case; [section 8](#8-prove-final-invariants) lists what to restore.
 
 | Where execution stopped | Next action |
 |---|---|
 | Offline checks or source-hash mismatch | Fix the missing tool or review the source diff. No Azure write is needed. |
 | Provider/RBAC failure or definition collision | Inspect the exact error and assignment/resource inventory. A same-name definition may be shared; do not overwrite or remove it to bypass the gate. |
-| Policy scan or remediation timeout | Inspect Policy Compliance and the named remediation task/deployments. Resume read-only polling after convergence; do not promote on empty state or create another task while the first is active. |
+| Policy scan or remediation timeout | Inspect Policy Compliance and the named remediation task/deployments. Resume read-only polling after convergence; do not promote on empty state or create another task while the first is active. If a section 8 required resource still has no rows, follow the [section 8 retry](#8-prove-final-invariants): wait for any running scan, start a fresh one, and rerun that gate with every required ID. |
 | Automation job, seed PUT, or apply timeout | Inspect the exact job and policy readback. Stop any running canary job in the Automation portal and wait for it to stop. Revoke the exact writer with `ring-role.sh revoke` using the live account principal as in section 11. Do not replay a PUT whose outcome is unknown. |
 | Writer revocation failure | Restore RBAC delete authority, repeat that exact revoke, and require success before further work. |
 | Partial deployment or finished exercise to remove | Use section 11 against the saved owned RG. If a role helper refuses an ownership mismatch, inspect and resolve that mismatch before deleting the identity. |

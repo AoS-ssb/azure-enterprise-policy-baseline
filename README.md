@@ -63,7 +63,7 @@ artifacts and a single assignment surface.
 | 1 | `deny-storage-https-disabled` | Security | Deny | Storage accounts must enforce HTTPS-only traffic |
 | 2 | `deny-storage-minimum-tls` | Security | Deny | Storage accounts must set a minimum TLS version (default TLS 1.2) |
 | 3 | `deny-storage-public-blob-access` | Security | Deny | Storage accounts must disallow anonymous blob access |
-| 4 | `deny-nsg-open-management-ports` | Security | Deny | No NSG rule may allow SSH/RDP (parameterized) inbound from the Internet |
+| 4 | `deny-nsg-open-management-ports` | Security | Deny | Child NSG rules may not allow SSH/RDP (parameterized) inbound from the Internet; see [Known limitations](docs/DESIGN.md#known-limitations) for inline rules and port ranges |
 | 5 | `deny-nic-public-ip` | Security | Deny | Network interfaces must not attach public IP addresses |
 | 6 | `deny-sql-public-network-access` | Security | Deny | SQL logical servers must disable public network access |
 | 7 | `deny-keyvault-purge-protection-disabled` | Security | Deny | Key vaults must enable purge protection |
@@ -179,11 +179,21 @@ requires a separate ownership and assignment inventory before use.
 
 ## Live validation
 
-The latest joint qualification retained a resource-group-scoped Policy +
+The 2026-08-31 joint qualification retained a resource-group-scoped Policy +
 Automation showcase after Policy report-only/enforcement/remediation and a
 fresh Automation audit/apply/idempotence cycle. Its tenant-neutral outcomes,
 least-privilege final state, and explicit limits are in
 [the 2026-08-31 joint validation record](docs/LIVE-TEST-2026-08-31-policy-automation.md).
+
+The replication guide was then exercised again. The
+[2026-09-06 record](docs/LIVE-TEST-2026-09-06-policy-automation.md) covers the
+corrected final-state gate and byte-preserving runbook publication. The
+[2026-09-27 new-tenant record](docs/LIVE-TEST-2026-09-27-new-tenant.md) repeats
+guide sections 1–8 with the same pins in a brand-new tenant and Free Trial
+subscription, and adds validation-only Deny probes, confirmation of both
+documented NSG limitations, and an optional VM extension with real backup
+protection. That extension includes one runbook write, in an exclusive test
+window, to a policy protecting a real VM.
 
 For Azure Files backup, begin with the Microsoft-first
 [enforcement guide](docs/GUIDE-file-share-backup-enforcement.md). It covers the
