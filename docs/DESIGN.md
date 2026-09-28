@@ -95,17 +95,44 @@ wrong-but-working default is how policy ends up silently ineffective.
   allowing `20-30` isn't flagged even though it spans 22. Exact matches,
   wildcards, and `destinationPortRanges` arrays are covered. This is the same
   limitation the ALZ deny-management-ports policy has; range arithmetic isn't
-  expressible in policy language.
+  expressible in policy language. A 2026-09-27
+  [validation probe](LIVE-TEST-2026-09-27-new-tenant.md#nsg-observations)
+  confirmed this for child rules: `1-65535` from `*` (every usable port) and
+  `20-25` from `Internet` were not denied, while a `["80","3389"]` list from
+  `*` was.
 - **NSG rules created inline** (as `securityRules[]` in the parent NSG PUT,
   e.g. by some Terraform configurations) are evaluated as the child
   `securityRules` type only on subsequent per-rule writes. Compliance scans
-  still catch them after creation.
+  still catch them after creation. A 2026-09-27 validation probe confirmed
+  the request-time gap: inline rules (22 from `*`, 3389 from `::/0`) passed
+  validation, while the same rules as child resources were denied. In the same
+  run, a detached NSG actually created under enforcement with an inline
+  22-from-`*` rule was reported `NonCompliant` by a later compliance scan
+  ([record](LIVE-TEST-2026-09-27-new-tenant.md#nsg-observations)).
+- **Operator mitigation for both NSG gaps:** where you own the templates,
+  declare rules as child `securityRules` resources so request-time Deny
+  applies. Rely on compliance results, and alerts on them, for inline rules.
+  Review port-range rules separately, because the policy rule cannot flag a
+  range that spans a blocked port; for example, inspect the
+  `destinationPortRange` and `destinationPortRanges` values that
+  `az network nsg rule list` returns for allowed inbound rules.
 - **`allowed-vm-skus` covers `Microsoft.Compute/virtualMachines` only**, not
   scale-set SKU properties. Add a VMSS variant if scale sets are common in
   your estate.
+- **VM sizes offered vary by subscription and region.** Before setting
+  `allowedVmSkus`, check
+  `az vm list-skus --location <region> --resource-type virtualMachines` in the
+  target subscription; its output accounts for subscription-level
+  restrictions. Also check regional vCPU quota with
+  `az vm list-usage --location <region>`. The example parameter file lists
+  B-series and v5 sizes, but a 2026-09-27 Free Trial subscription was offered
+  no v5 D-series size in eastus2, and its regional vCPU quota was 4.
 - **The unmanaged-disk policy is legacy defense in depth.** Azure retired
   unmanaged disks on 2026-03-31, so new subscriptions cannot provision a real
-  violating VM. A crafted ARM request can still prove policy interception.
+  violating VM. A crafted ARM request can still prove policy interception, as
+  a 2026-09-27
+  [validation probe](LIVE-TEST-2026-09-27-new-tenant.md#validation-only-deny-probes)
+  did.
 - **The diagnostics DINE can conflict with pre-existing settings** that send
   the same categories to a different sink under a different setting name
   (Azure rejects duplicate category/destination pairs). Existing vaults with
@@ -125,7 +152,9 @@ wrong-but-working default is how policy ends up silently ineffective.
    deliberately non-compliant resource (e.g. a storage account with
    `--allow-blob-public-access true`), then
    `az policy state trigger-scan --resource-group <rg> --no-wait` and confirm it shows
-   non-compliant.
+   non-compliant. If a scan is already running for the group, the request
+   joins it, and a resource created after that scan began may need a later
+   scan before it appears.
 4. Promote the same assignment to enforcing and confirm the create is denied.
 5. Test `require-tag-on-resource-groups` separately at subscription scope,
    excluding all existing resource groups with `notScopes`; an assignment on
